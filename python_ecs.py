@@ -1,37 +1,89 @@
-from typing import List, Any, Callable, Iterable, Type, TypeVar, Tuple, get_args, Dict, List, Set, Union
+from typing import List, Any, Callable, Iterable, Type, TypeVar, Tuple, get_args, Dict, Union
 import inspect
+import numpy as np
+import numpy.typing as npt
+from dataclasses import dataclass
 
 class EntityId(int):
     """Wrapper around int to represent an entity id."""
     def __repr__(self):
         return f'EntityId({int(self)})'
 
+class Empty(np.generic):
+    """Placeholder for missing components."""
+    pass
+
+D = TypeVar('D', bound=np.generic, covariant=True)
+def filtered(arr: npt.NDArray[Union[D, Empty]]) -> Iterable[D]:
+    """Return an iterator over the array, filtering out Empty values. No copying is done."""
+    return (x for x in arr if x is not Empty)
+
+D1 = TypeVar('D1', bound=np.generic, covariant=True)
+D2 = TypeVar('D2', bound=np.generic, covariant=True)
+def filtered_zip(arr1: npt.NDArray[Union[D1, Empty]], arr2: npt.NDArray[Union[D2, Empty]]) -> Iterable[Tuple[D1, D2]]:
+    """Return an iterator over the arrays, filtering out Empty values. No copying is done."""
+    return ((x, y) for x, y in zip(arr1, arr2) if x is not Empty and y is not Empty)
+
+D3 = TypeVar('D3', bound=np.generic, covariant=True)
+def filtered_zip3(
+    arr1: npt.NDArray[Union[D1, Empty]], arr2: npt.NDArray[Union[D2, Empty]], arr3: npt.NDArray[Union[D3, Empty]]
+) -> Iterable[Tuple[D1, D2, D3]]:
+    """Return an iterator over the arrays, filtering out Empty values. No copying is done."""
+    return ((x, y, z) for x, y, z in zip(arr1, arr2, arr3) if x is not Empty and y is not Empty and z is not Empty)
+
+D4 = TypeVar('D4', bound=np.generic, covariant=True)
+def filtered_zip4(
+    arr1: npt.NDArray[Union[D1, Empty]], arr2: npt.NDArray[Union[D2, Empty]], arr3: npt.NDArray[Union[D3, Empty]], arr4: npt.NDArray[Union[D4, Empty]]
+) -> Iterable[Tuple[D1, D2, D3, D4]]:
+    """Return an iterator over the arrays, filtering out Empty values. No copying is done."""
+    return ((x, y, z, w) for x, y, z, w in zip(arr1, arr2, arr3, arr4) if x is not Empty and y is not Empty and z is not Empty and w is not Empty)
+
 class Ctx:
     """
     Stores all entities and components in the game.
-    Data is stored as a Table, i.e a list of lists.
+    Data is stored as a table, i.e., a set of NumPy arrays.
     Row index is the entity id, and columns store components.
-    Entities and Components are never removed.
+    Entities and components are never removed.
     """
 
-    def __init__(self) -> None:
-        self.entities: Set[EntityId] = set()
-        self.components_by_type: Dict[Type, Dict[EntityId, Any]] = {}
+    def __init__(self, initial_capacity: int = 1024) -> None:
+        self.entity_capacity: int = initial_capacity
+        self.entity_count: int = 0  # Total number of entities
+        self.components_by_type: Dict[Type, npt.NDArray[Union[Any, Empty]]] = {}
+
+    def _expand_capacity(self) -> None:
+        """Double the capacity of all component arrays to accommodate more entities."""
+        old_capacity = self.entity_capacity
+        self.entity_capacity *= 2
+        for component_type, array in self.components_by_type.items():
+            new_array = np.empty(self.entity_capacity, dtype=object)
+            new_array[:old_capacity] = array
+            new_array[old_capacity:] = Empty
+            self.components_by_type[component_type] = new_array
 
     def add_entity(self) -> EntityId:
-        entity_id = EntityId(len(self.entities))
-        self.entities.add(entity_id)
-        self.add_component(entity_id, entity_id) # Add entity id as a component so it can be queried
+        """Add a new entity and return its EntityId."""
+        entity_id = EntityId(self.entity_count)
+        self.entity_count += 1
+        if self.entity_count > self.entity_capacity:
+            self._expand_capacity()
         return entity_id
-    
+
     def add_component(self, entity: EntityId, component: Any) -> None:
-        assert entity in self.entities, f"Entity {entity} does not exist."
+        """Add a component to an entity."""
+        assert 0 <= entity < self.entity_count, f"Entity {entity} does not exist."
         component_type = type(component)
         if component_type not in self.components_by_type:
-            self.components_by_type[component_type] = {}
-        self.components_by_type[component_type][entity] = component
+            # Create a new component array for this type
+            array = np.empty(self.entity_capacity, dtype=object)
+            array[:] = Empty
+            self.components_by_type[component_type] = array
+        else:
+            array = self.components_by_type[component_type]
+        array[entity] = component
 
     def add_entity_with_components(self, *components: Any) -> EntityId:
+        """Add a new entity with the given components."""
         entity_id = self.add_entity()
         for component in components:
             self.add_component(entity_id, component)
@@ -39,50 +91,70 @@ class Ctx:
 
     T = TypeVar('T')
     def make_unary_query(self, t: Type[T]) -> Iterable[T]:
-        """Returns an iterable of all components of the given type."""
-        return self.components_by_type.get(t, {}).values()
-    
+        """Return an iterable of components of type t."""
+        array = self.components_by_type.get(t)
+        if array is None:
+            return []
+        else:
+            return filtered(array)
+
     T1 = TypeVar('T1')
     T2 = TypeVar('T2')
     def make_binary_query(self, t1: Type[T1], t2: Type[T2]) -> Iterable[Tuple[T1, T2]]:
-        """Returns an iterable of component tuples, for entities that have both types."""
-        entities_with_t1 = self.components_by_type.get(t1, {})
-        entities_with_t2 = self.components_by_type.get(t2, {})
-        common_entities = entities_with_t1.keys() & entities_with_t2.keys()
-        return ((entities_with_t1[e], entities_with_t2[e]) for e in common_entities)
-    
-    T3 = TypeVar('T3')
-    def make_ternary_query(self, t1: Type[T1], t2: Type[T2], t3: Type[T3]) -> Iterable[Tuple[T1, T2, T3]]:
-        """Returns an iterable of component tuples, for entities that have all three types."""
-        entities_with_t1 = self.components_by_type.get(t1, {})
-        entities_with_t2 = self.components_by_type.get(t2, {})
-        entities_with_t3 = self.components_by_type.get(t3, {})
-        common_entities = entities_with_t1.keys() & entities_with_t2.keys() & entities_with_t3.keys()
-        return ((entities_with_t1[e], entities_with_t2[e], entities_with_t3[e]) for e in common_entities)
-    
-    T4 = TypeVar('T4')
-    def make_quaternary_query(self, t1: Type[T1], t2: Type[T2], t3: Type[T3], t4: Type[T4]) -> Iterable[Tuple[T1, T2, T3, T4]]:
-        """Returns an iterable of component tuples, for entities that have all four types."""
-        entities_with_t1 = self.components_by_type.get(t1, {})
-        entities_with_t2 = self.components_by_type.get(t2, {})
-        entities_with_t3 = self.components_by_type.get(t3, {})
-        entities_with_t4 = self.components_by_type.get(t4, {})
-        common_entities = entities_with_t1.keys() & entities_with_t2.keys() & entities_with_t3.keys() & entities_with_t4.keys()
-        return ((entities_with_t1[e], entities_with_t2[e], entities_with_t3[e], entities_with_t4[e]) for e in common_entities)
+        """Return an iterable of tuples (Component1, Component2) for entities with both components."""
+        arr1 = self.components_by_type.get(t1)
+        arr2 = self.components_by_type.get(t2)
+        if arr1 is None or arr2 is None:
+            return []
+        else:
+            return filtered_zip(arr1, arr2)
 
-T = TypeVar('T')
-def infer_iterable_type_from_callable(f: Callable[[Iterable[T]], None]) -> Type[T]:
+    T3 = TypeVar('T3')
+    def make_ternary_query(
+        self, t1: Type[T1], t2: Type[T2], t3: Type[T3]
+    ) -> Iterable[Tuple[T1, T2, T3]]:
+        """Return an iterable of tuples (Component1, Component2, Component3) for entities with all three components."""
+        arr1 = self.components_by_type.get(t1)
+        arr2 = self.components_by_type.get(t2)
+        arr3 = self.components_by_type.get(t3)
+        if arr1 is None or arr2 is None or arr3 is None:
+            return []
+        else:
+            return filtered_zip3(arr1, arr2, arr3)
+
+    T4 = TypeVar('T4')
+    def make_quaternary_query(
+        self, t1: Type[T1], t2: Type[T2], t3: Type[T3], t4: Type[T4]
+    ) -> Iterable[Tuple[T1, T2, T3, T4]]:
+        """Return an iterable of tuples (Component1, Component2, Component3, Component4) for entities with all four components."""
+        arr1 = self.components_by_type.get(t1)
+        arr2 = self.components_by_type.get(t2)
+        arr3 = self.components_by_type.get(t3)
+        arr4 = self.components_by_type.get(t4)
+        if arr1 is None or arr2 is None or arr3 is None or arr4 is None:
+            return []
+        else:
+            return filtered_zip4(arr1, arr2, arr3, arr4)
+
+Ty=TypeVar('Ty')
+def infer_iterable_type_from_callable(f: Callable[[Iterable[Ty]], None]) -> Type[Ty]:
     """Infer the type T from a callable that takes an Iterable[T] as an argument."""
     func_signature = inspect.signature(f)
-    f_type_hint = list(func_signature.parameters.values())[0].annotation
+    params = list(func_signature.parameters.values())
+    if not params:
+        raise ValueError(f"Function {f} does not take any arguments.")
+    f_type_hint = params[0].annotation
     args = get_args(f_type_hint)
-    return args[0]
+    if not args:
+        raise ValueError(f"Could not infer type from {f_type_hint}")
+    iterable_arg = args[0]  # The type inside Iterable[...]
+    return iterable_arg
 
 class System:
     """
     A System wraps a function with a signature of (Ctx) -> None.
-    It can be created from a function with a signature of (Iterable[T]) -> None, or (Iterable[Tuple[T1, T2]]) -> None, etc.
-    Therefore, a System is a way of abstracting over different arities of functions and providing a common interface to call them.
+    It can be created from a function with a signature of (Iterable[T]), or (Iterable[Tuple[T1, T2]]), etc.
+    Therefore, a System abstracts over different arities of functions and provides a common interface to call them.
     """
 
     def __init__(self, f: Callable[[Ctx], None]) -> None:
@@ -90,23 +162,26 @@ class System:
 
     @classmethod
     def from_callable(cls, call: Callable) -> 'System':
-        #check if 0 args
-        if not inspect.signature(call).parameters:
+        parameters = inspect.signature(call).parameters
+        if not parameters:
             return cls.from_nullary_func(call)
-        #check if Iterable[T]
-        i_type = infer_iterable_type_from_callable(call)
-        if not get_args(i_type):
-            return cls.from_unary_query_func(call)
-        #check if Iterable[Tuple[T1, T2, ...]]
-        arity = len(get_args(i_type))
-        if arity == 2:
-            return cls.from_binary_query_func(call)
-        elif arity == 3:
-            return cls.from_ternary_query_func(call)
-        elif arity == 4:
-            return cls.from_quaternary_query_func(call)
         else:
-            raise ValueError(f"Unsupported arity of function: {arity}")
+            iterable_type = infer_iterable_type_from_callable(call)
+            tuple_types = get_args(iterable_type)
+            if not tuple_types or len(tuple_types) == 1:
+                # The function accepts an Iterable[T]
+                return cls.from_unary_query_func(call)
+            else:
+                # The function accepts an Iterable[Tuple[...]]
+                arity = len(tuple_types)
+                if arity == 2:
+                    return cls.from_binary_query_func(call)
+                elif arity == 3:
+                    return cls.from_ternary_query_func(call)
+                elif arity == 4:
+                    return cls.from_quaternary_query_func(call)
+                else:
+                    raise ValueError(f"Unsupported arity of function: {arity}")
 
     @classmethod
     def from_nullary_func(cls, f: Callable[[], None]) -> 'System':
@@ -118,41 +193,53 @@ class System:
     T = TypeVar('T')
     @classmethod
     def from_unary_query_func(cls, f: Callable[[Iterable[T]], None]) -> 'System':
-        """Convert a function that takes an iterable of components to a System. The iterable yields every component of the given type."""
+        """Convert a function that takes an iterable of components to a System."""
         def wrapped(ctx: Ctx) -> None:
-            t = infer_iterable_type_from_callable(f)
-            f(ctx.make_unary_query(t))
+            component_type = infer_iterable_type_from_callable(f)
+            f(ctx.make_unary_query(component_type))
         return cls(wrapped)
 
     T1 = TypeVar('T1')
     T2 = TypeVar('T2')
     @classmethod
     def from_binary_query_func(cls, f: Callable[[Iterable[Tuple[T1, T2]]], None]) -> 'System':
-        """Convert a function that takes an iterable of component pairs to a System. The iterable yields the components of every entity that has both types."""
+        """Convert a function that takes an iterable of (Component1, Component2) to a System."""
         def wrapped(ctx: Ctx) -> None:
-            tup = infer_iterable_type_from_callable(f)
-            t1, t2 = get_args(tup)
-            f(ctx.make_binary_query(t1, t2))
+            iterable_arg = infer_iterable_type_from_callable(f)
+            tuple_args = get_args(iterable_arg)
+            if len(tuple_args) == 2:
+                t1, t2 = tuple_args
+                f(ctx.make_binary_query(t1, t2))
+            else:
+                raise ValueError(f"Unsupported function signature: {f}")
         return cls(wrapped)
-    
+
     T3 = TypeVar('T3')
     @classmethod
     def from_ternary_query_func(cls, f: Callable[[Iterable[Tuple[T1, T2, T3]]], None]) -> 'System':
-        """Convert a function that takes an iterable of component triplets to a System. The iterable yields the components of every entity that has all three types."""
+        """Convert a function that takes an iterable of (Component1, Component2, Component3) to a System."""
         def wrapped(ctx: Ctx) -> None:
-            tup = infer_iterable_type_from_callable(f)
-            t1, t2, t3 = get_args(tup)
-            f(ctx.make_ternary_query(t1, t2, t3))
+            iterable_arg = infer_iterable_type_from_callable(f)
+            tuple_args = get_args(iterable_arg)
+            if len(tuple_args) == 3:
+                t1, t2, t3 = tuple_args
+                f(ctx.make_ternary_query(t1, t2, t3))
+            else:
+                raise ValueError(f"Unsupported function signature: {f}")
         return cls(wrapped)
-    
+
     T4 = TypeVar('T4')
     @classmethod
     def from_quaternary_query_func(cls, f: Callable[[Iterable[Tuple[T1, T2, T3, T4]]], None]) -> 'System':
-        """Convert a function that takes an iterable of component quadruples to a System. The iterable yields the components of every entity that has all four types."""
+        """Convert a function that takes an iterable of (Component1, Component2, Component3, Component4) to a System."""
         def wrapped(ctx: Ctx) -> None:
-            tup = infer_iterable_type_from_callable(f)
-            t1, t2, t3, t4 = get_args(tup)
-            f(ctx.make_quaternary_query(t1, t2, t3, t4))
+            iterable_arg = infer_iterable_type_from_callable(f)
+            tuple_args = get_args(iterable_arg)
+            if len(tuple_args) == 4:
+                t1, t2, t3, t4 = tuple_args
+                f(ctx.make_quaternary_query(t1, t2, t3, t4))
+            else:
+                raise ValueError(f"Unsupported function signature: {f}")
         return cls(wrapped)
 
     def call(self, ctx: Ctx) -> None:
@@ -176,8 +263,6 @@ def examples():
     """
     Some simple examples demonstrating the usage of the ECS system.
     """
-    from dataclasses import dataclass
-
     @dataclass
     class Position:
         x: float
@@ -219,21 +304,21 @@ def examples():
     ctx.add_component(e3, Health(50))
 
     # Movement system: updates positions based on velocities
-    def movement_system(components: Iterable[Tuple[EntityId, Position, Velocity]]):
-        for i, position, velocity in components:
+    def movement_system(components: Iterable[Tuple[Position, Velocity]]):
+        for position, velocity in components:
             position.x += velocity.x
             position.y += velocity.y
-            print(f"Moved {i} to ({position.x}, {position.y})")
+            print(f"Moved to ({position.x}, {position.y})")
 
     # Health system: prints the health of all entities with Health component
-    def health_system(components: Iterable[Tuple[EntityId, Health]]):
-        for i, health in components:
-            print(f"{i} has health {health.value}")
+    def health_system(components: Iterable[Health]):
+        for health in components:
+            print(f"Entity has health {health.value}")
 
-    #Name system: prints the name of all entities with Name component
+    # Name system: prints the name of all entities with Name component
     def name_system(components: Iterable[Name]):
         for name in components:
-            print(f"{name.value}")
+            print(f"Entity is named {name.value}")
 
     # Create a scheduler and add systems
     scheduler = Scheduler()
@@ -245,7 +330,7 @@ def examples():
     print("Running ECS Example:")
     scheduler.run(ctx)
 
-def tests():
+def tests() -> None:
     """
     Comprehensive tests for the ECS system.
     """
