@@ -87,6 +87,10 @@ class System:
     def __init__(self, f: Callable[[Ctx], None]) -> None:
         self.__f = f
 
+    #infer callable type and call one of the from_<>_query_func methods
+    # def from_callable(self, call: Callable[[Any], None]) -> None:
+    #     ...
+
     @classmethod
     def from_nullary_func(cls, f: Callable[[], None]) -> 'System':
         """Convert a function that takes no arguments to a System."""

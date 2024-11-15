@@ -1,4 +1,5 @@
-from python_ecs import Ctx, System, Scheduler, EntityId
+import pygame.camera
+from python_ecs import Ctx, System, Scheduler
 import pygame
 from pygame.surface import Surface
 from typing import Iterable, Tuple
@@ -43,7 +44,6 @@ def clear_screen_system(surface_query: Iterable[Surface]):
 
 def update_display_system():
     pygame.display.flip()
-
 
 def tick_clock_system(query: Iterable[Tuple[Clock, DeltaTime]]):
     for clock, dt in query:
