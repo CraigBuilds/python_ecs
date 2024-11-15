@@ -52,11 +52,11 @@ def tick_clock_system(query: Iterable[Tuple[Clock, DeltaTime]]):
 def main():
     ctx = Ctx()
     scheduler = Scheduler()
-    scheduler.add_system(System.from_unary_query_func(clear_screen_system))
-    scheduler.add_system(System.from_ternary_query_func(movement_system))
-    scheduler.add_system(System.from_ternary_query_func(render_shapes_system))
-    scheduler.add_system(System.from_nullary_func(update_display_system))
-    scheduler.add_system(System.from_binary_query_func(tick_clock_system))
+    scheduler.add_system(clear_screen_system)
+    scheduler.add_system(movement_system)
+    scheduler.add_system(render_shapes_system)
+    scheduler.add_system(update_display_system)
+    scheduler.add_system(tick_clock_system)
     
     surface = pygame.display.set_mode((800, 600))
     clock = Clock(pygame.time.Clock())

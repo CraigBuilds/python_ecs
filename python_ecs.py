@@ -1,4 +1,4 @@
-from typing import List, Any, Callable, Iterable, Type, TypeVar, Tuple, get_args, Dict, List, Set
+from typing import List, Any, Callable, Iterable, Type, TypeVar, Tuple, get_args, Dict, List, Set, Union
 import inspect
 
 class EntityId(int):
@@ -70,7 +70,7 @@ class Ctx:
         return ((entities_with_t1[e], entities_with_t2[e], entities_with_t3[e], entities_with_t4[e]) for e in common_entities)
 
 T = TypeVar('T')
-def infer_type_from_callable(f: Callable[[Iterable[T]], None]) -> Type[T]:
+def infer_iterable_type_from_callable(f: Callable[[Iterable[T]], None]) -> Type[T]:
     """Infer the type T from a callable that takes an Iterable[T] as an argument."""
     func_signature = inspect.signature(f)
     f_type_hint = list(func_signature.parameters.values())[0].annotation
@@ -87,9 +87,25 @@ class System:
     def __init__(self, f: Callable[[Ctx], None]) -> None:
         self.__f = f
 
-    #infer callable type and call one of the from_<>_query_func methods
-    # def from_callable(self, call: Callable[[Any], None]) -> None:
-    #     ...
+    @classmethod
+    def from_callable(cls, call: Callable) -> 'System':
+        #check if 0 args
+        if not inspect.signature(call).parameters:
+            return cls.from_nullary_func(call)
+        #check if Iterable[T]
+        i_type = infer_iterable_type_from_callable(call)
+        if not get_args(i_type):
+            return cls.from_unary_query_func(call)
+        #check if Iterable[Tuple[T1, T2, ...]]
+        arity = len(get_args(i_type))
+        if arity == 2:
+            return cls.from_binary_query_func(call)
+        elif arity == 3:
+            return cls.from_ternary_query_func(call)
+        elif arity == 4:
+            return cls.from_quaternary_query_func(call)
+        else:
+            raise ValueError(f"Unsupported arity of function: {arity}")
 
     @classmethod
     def from_nullary_func(cls, f: Callable[[], None]) -> 'System':
@@ -103,7 +119,7 @@ class System:
     def from_unary_query_func(cls, f: Callable[[Iterable[T]], None]) -> 'System':
         """Convert a function that takes an iterable of components to a System. The iterable yields every component of the given type."""
         def wrapped(ctx: Ctx) -> None:
-            t = infer_type_from_callable(f)
+            t = infer_iterable_type_from_callable(f)
             f(ctx.make_unary_query(t))
         return cls(wrapped)
 
@@ -113,7 +129,7 @@ class System:
     def from_binary_query_func(cls, f: Callable[[Iterable[Tuple[T1, T2]]], None]) -> 'System':
         """Convert a function that takes an iterable of component pairs to a System. The iterable yields the components of every entity that has both types."""
         def wrapped(ctx: Ctx) -> None:
-            tup = infer_type_from_callable(f)
+            tup = infer_iterable_type_from_callable(f)
             t1, t2 = get_args(tup)
             f(ctx.make_binary_query(t1, t2))
         return cls(wrapped)
@@ -123,7 +139,7 @@ class System:
     def from_ternary_query_func(cls, f: Callable[[Iterable[Tuple[T1, T2, T3]]], None]) -> 'System':
         """Convert a function that takes an iterable of component triplets to a System. The iterable yields the components of every entity that has all three types."""
         def wrapped(ctx: Ctx) -> None:
-            tup = infer_type_from_callable(f)
+            tup = infer_iterable_type_from_callable(f)
             t1, t2, t3 = get_args(tup)
             f(ctx.make_ternary_query(t1, t2, t3))
         return cls(wrapped)
@@ -133,7 +149,7 @@ class System:
     def from_quaternary_query_func(cls, f: Callable[[Iterable[Tuple[T1, T2, T3, T4]]], None]) -> 'System':
         """Convert a function that takes an iterable of component quadruples to a System. The iterable yields the components of every entity that has all four types."""
         def wrapped(ctx: Ctx) -> None:
-            tup = infer_type_from_callable(f)
+            tup = infer_iterable_type_from_callable(f)
             t1, t2, t3, t4 = get_args(tup)
             f(ctx.make_quaternary_query(t1, t2, t3, t4))
         return cls(wrapped)
@@ -148,8 +164,8 @@ class Scheduler:
     def __init__(self) -> None:
         self.__systems: List[System] = []
 
-    def add_system(self, system: System) -> None:
-        self.__systems.append(system)
+    def add_system(self, callable: Callable) -> None:
+        self.__systems.append(System.from_callable(callable))
 
     def run(self, ctx: Ctx) -> None:
         for system in self.__systems:
@@ -220,9 +236,9 @@ def examples():
 
     # Create a scheduler and add systems
     scheduler = Scheduler()
-    scheduler.add_system(System.from_ternary_query_func(movement_system))
-    scheduler.add_system(System.from_binary_query_func(health_system))
-    scheduler.add_system(System.from_unary_query_func(name_system))
+    scheduler.add_system(movement_system)
+    scheduler.add_system(health_system)
+    scheduler.add_system(name_system)
 
     # Run the scheduler
     print("Running ECS Example:")
