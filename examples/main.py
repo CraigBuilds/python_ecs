@@ -1,5 +1,4 @@
-import pygame.camera
-from python_ecs import Ctx, System, Scheduler
+from python_ecs import Ctx, Scheduler
 import pygame
 from pygame.surface import Surface
 from typing import Iterable, Tuple
