@@ -11,6 +11,7 @@ class Ctx:
     Stores all entities and components in the game.
     Data is stored as a Table, i.e a list of lists.
     Row index is the entity id, and columns store components.
+    Entities and Components are never removed.
     """
 
     def __init__(self) -> None:
